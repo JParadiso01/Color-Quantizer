@@ -88,9 +88,11 @@ Point *points;
 int ok, width, height, comps;
 int pointCount = 0;
 
-#define K_COUNT 2
-Point K[K_COUNT] = {0};
+#define MAX_Ks 10
+int K_count = 2;
+Point K[MAX_Ks] = {0};
 
+char *filename;
 
 WINBOOL CompareColors(Point p1, Point p2){
     return p1.color.r == p2.color.r && p1.color.g == p2.color.g && p1.color.b == p2.color.b;
@@ -112,11 +114,11 @@ void InitializeK(Point *p, Color color, int index){
 
 }
 
-void update (Point K[K_COUNT], Point *dots){
+void update (Point K[MAX_Ks], Point *dots){
     int ax = 0;
     int ay = 0;
     int cc = 0;
-    for (int i = 0; i < K_COUNT; i++){
+    for (int i = 0; i < K_count; i++){
         for (int j = 0; j < pointCount; j++){
             if (CompareColors(K[i], dots[j])){
                 ax += dots[j].pos.x;
@@ -375,9 +377,10 @@ void PointsToPixels(unsigned char *pixels, Point *points){
     }
 }
 
-void WriteImage(char * filename, unsigned char *pixels){
-    stbi_write_jpg(filename, width, height, comps, pixels, 80);
+void WriteImageWithName(char * output_filename, unsigned char *pixels){
+    stbi_write_jpg(output_filename, width, height, comps, pixels, 80);
 }
+
 // Step 4: the Window Procedure
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -400,7 +403,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 case 0x4C:
                     unsigned char *pixels = malloc(sizeof(unsigned char)*width*height*3);
                     PointsToPixels(pixels, points);
-                    WriteImage("output.jpg", pixels);
+                    WriteImageWithName("output.jpg", pixels);
                     break;
                 //R
                 case 0x52:
@@ -413,12 +416,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             break;
 
         case WM_PAINT:
+            //sets up K-means
             Point closest = K[0];
-            Color K_colors[K_COUNT] = {0};
-            int K_colors_count[K_COUNT] = {0};
+            Color *K_colors = (Color *)malloc(sizeof(Color)*K_count);
+            memset(K_colors, 0, sizeof(Color)*K_count);
+            int *K_colors_count = (int *)malloc(sizeof(int)*K_count);
+            memset(K_colors_count, 0, sizeof(int)*K_count);
+
+            //sets up closest point to same color
             for (int i = 0; i < pointCount; i++){
 
-                for (int j = 0; j < K_COUNT; j++){
+                for (int j = 0; j < K_count; j++){
                     if (SquaredDistance(points[i], closest) >= SquaredDistance(points[i], K[j])){
                         closest = K[j];
                         points[i].closest_K = j;
@@ -430,15 +438,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 K_colors[points[i].closest_K].b += points[i].color.b;
 
                 K_colors_count[points[i].closest_K] += 1;
-                //printf("COLOR %d = r: %d, g: %d, b: %d, count: %d\n", i, K_colors[points[i].closest_K].r, K_colors[points[i].closest_K].g, K_colors[points[i].closest_K].b, K_colors_count[points[i].closest_K]);
             }
-            for (int i = 0; i < K_COUNT; i++){
+
+            //averages out colors
+            for (int i = 0; i < K_count; i++){
                 if (K_colors_count[i] != 0){
                     K_colors[i].r /= K_colors_count[i];
                     K_colors[i].g /= K_colors_count[i];
                     K_colors[i].b /= K_colors_count[i];
                 }
-                printf("COLOR %d = r: %d, g: %d, b: %d, count: %d\n", i, K_colors[i].r, K_colors[i].g, K_colors[i].b, K_colors_count[i]);
+                //printf("COLOR %d = r: %d, g: %d, b: %d, count: %d\n", i, K_colors[i].r, K_colors[i].g, K_colors[i].b, K_colors_count[i]);
             }
 
             // sets up backbuffer
@@ -446,7 +455,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             HDC hdcBack = CreateCompatibleDC(hdc);
             GetClientRect(hwnd, &windowRect); 
             HPEN nullPen = CreatePen(PS_NULL, 1, colors[WHITE]);
-            HPEN KPen = CreatePen(PS_SOLID, 2, colors[WHITE]);
+            HPEN KPen = CreatePen(PS_SOLID, 2, colors[BLACK]);
             HBITMAP backBuffer = CreateCompatibleBitmap(hdc, windowRect.right, windowRect.bottom);
             SelectObject(hdcBack, backBuffer);
             DrawBackground(hdcBack, BG_COLOR_BRUSH);
@@ -456,19 +465,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             SelectObject(hdcBack, nullPen); 
 
-            /*
-            for (int i = 0; i < pointCount; i++){
-                DrawPoint(hdcBack, points[i], graph);
-            }
-            */
-
+            //Draws Points
             for (int i = 0; i < pointCount; i++){
                 DrawPointWithColor(hdcBack, &points[i], graph, K_colors[points[i].closest_K]);
             }
 
+
             SelectObject(hdcBack, KPen); 
             //draws Ks
-            for (int i = 0; i < K_COUNT; i++){
+            for (int i = 0; i < K_count; i++){
                 DrawPointWithColor(hdcBack, &K[i], graph, K_colors[K[i].closest_K]);
             }
             //copies back buffer into front buffer
@@ -479,12 +484,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             DeleteObject(backBuffer);
             DeleteObject(nullPen);
             DeleteObject(KPen);
+            free(K_colors);
+            free(K_colors_count);
             EndPaint(hwnd, &ps);
 
-            //logic
-            
-            //slows down program
-            Sleep(20);
             break;
         default:
             return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -528,25 +531,28 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     PWSTR *argv = CommandLineToArgvW(GetCommandLineW(),&argc);
     if (argc < 2){
         printf("ERROR: User must provide input image\n");
-        printf("USAGE: ./color-quantizer <image_filepath>\n");
+        printf("USAGE: ./color-quantizer <image_filepath> <K_count>\n");
+        printf("K_count is 2 by default and max 10.\n");
         exit(1);
     }
 
     size_t filename_len = wcslen(argv[1]);
-    char *filename = (char *)malloc(sizeof(char)*(filename_len));
+    filename = (char *)malloc(sizeof(char)*(filename_len));
     wcstombs(filename, argv[1], filename_len);
     filename[filename_len] = '\0';
 
-    /*
     if (argc >= 3){
         char *temp = (char *)malloc(sizeof(char)*(wcslen(argv[2])));
         wcstombs(temp, argv[2], wcslen(argv[2]));
         temp[wcslen(argv[2])] = '\0';
-        K_COUNT = atoi(temp);
-
+        K_count = atoi(temp);
+        if (K_count > MAX_Ks){
+            printf("WARNING: Number of clusters is larger than MAX_Ks value (10). Your value will be set to 10.\n");
+            K_count = 10;
+        }
         free(temp);
     }
-    */
+    
     ok = stbi_info(filename, &width, &height, &comps);
     if (ok == 0){
         printf("ERROR: Image is not a supported format. Please supply one that is.\n");
@@ -557,8 +563,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     points = (Point *)malloc((sizeof(Point))*((width*height))); 
     //setup
 
-    printf("K_COUNT: %d\n", K_COUNT);
-    printf("width: %d, height: %d, comps: %d\n", width, height, comps);
+    //printf("K_COUNT: %d\n", K_count);
+    //printf("width: %d, height: %d, comps: %d\n", width, height, comps);
 
     for (size_t i = 0; i < (size_t)width*height*comps; i += comps){
         InitializePoint(&points[pointCount], pixels[i],pixels[i+1],pixels[i+2]);
@@ -567,10 +573,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     }
 
 
-    printf("PointCount: %d\n", pointCount);
+    //printf("PointCount: %d\n", pointCount);
     free(filename);
 
-    for (int i = 0; i < K_COUNT; i++){
+    for (int i = 0; i < K_count; i++){
         InitializeK(&K[i], (Color){0,0,0}, i);
     }
 
