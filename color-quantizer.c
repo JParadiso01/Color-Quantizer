@@ -1,10 +1,15 @@
 #include <Windows.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 #include <math.h>
-#include "strsafe.h"
+//#include "strsafe.h"
+
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 
 #define HEIGHT 600
 #define WIDTH  600
@@ -246,7 +251,7 @@ void DrawLabels(HDC screen){
     int angle = 150;
     HGDIOBJ hfnt;
     PLOGFONT plf = (PLOGFONT) LocalAlloc(LPTR, sizeof(LOGFONT)); 
-    StringCchCopy(plf->lfFaceName, 6, TEXT("Arial"));
+    strncpy(plf->lfFaceName,"Arial", 6);
     plf->lfWeight = FW_NORMAL; 
     SetBkMode(screen, TRANSPARENT); 
 
@@ -355,6 +360,24 @@ void DrawPointWithColor(HDC screen, Point *point, Graph g, Color color){
     DrawCircle(screen, color, x, y, point->radius);
 }
 
+/*-------------------------------------
+|                                     |
+|        Write Image functions        |
+|                                     |
+-------------------------------------*/
+void PointsToPixels(unsigned char *pixels, Point *points){
+    int pixelCount = 0;
+    for (int i = 0; i < pointCount; i++){
+        pixels[pixelCount] = points[i].color.r;
+        pixels[pixelCount+1] = points[i].color.g;
+        pixels[pixelCount+2] = points[i].color.b;
+        pixelCount += 3;
+    }
+}
+
+void WriteImage(char * filename, unsigned char *pixels){
+    stbi_write_jpg(filename, width, height, comps, pixels, 80);
+}
 // Step 4: the Window Procedure
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -373,6 +396,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case WM_KEYDOWN:
             switch (wParam)
             {
+                //L
+                case 0x4C:
+                    unsigned char *pixels = malloc(sizeof(unsigned char)*width*height*3);
+                    PointsToPixels(pixels, points);
+                    WriteImage("output.jpg", pixels);
+                    break;
                 //R
                 case 0x52:
                     update(K, points);
@@ -417,6 +446,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             HDC hdcBack = CreateCompatibleDC(hdc);
             GetClientRect(hwnd, &windowRect); 
             HPEN nullPen = CreatePen(PS_NULL, 1, colors[WHITE]);
+            HPEN KPen = CreatePen(PS_SOLID, 2, colors[WHITE]);
             HBITMAP backBuffer = CreateCompatibleBitmap(hdc, windowRect.right, windowRect.bottom);
             SelectObject(hdcBack, backBuffer);
             DrawBackground(hdcBack, BG_COLOR_BRUSH);
@@ -436,6 +466,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 DrawPointWithColor(hdcBack, &points[i], graph, K_colors[points[i].closest_K]);
             }
 
+            SelectObject(hdcBack, KPen); 
             //draws Ks
             for (int i = 0; i < K_COUNT; i++){
                 DrawPointWithColor(hdcBack, &K[i], graph, K_colors[K[i].closest_K]);
@@ -447,6 +478,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             DeleteDC(hdcBack);
             DeleteObject(backBuffer);
             DeleteObject(nullPen);
+            DeleteObject(KPen);
             EndPaint(hwnd, &ps);
 
             //logic
