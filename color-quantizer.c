@@ -2,11 +2,16 @@
 #include <stdio.h>
 #include <time.h>
 #include <math.h>
+#include "strsafe.h"
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+#define HEIGHT 600
+#define WIDTH  600
+#define MAX_RADIUS 5
+#define MIN_RADIUS 3
 
 RECT windowRect;
-int x = 273;
-int y = 300;
-int r = 10;
 
 enum COLOR_NAMES {
     RED = 0,
@@ -19,6 +24,7 @@ enum COLOR_NAMES {
     GRAY,
     LIGHT_GRAY,
     DARK_GRAY,
+    BLACK,
     COLOR_COUNT,
 };
 
@@ -33,9 +39,11 @@ COLORREF colors[COLOR_COUNT] = {
     RGB(0x80,0x80,0x80),
     RGB(0xDC,0xDC,0xDC),
     RGB(0x18,0x18,0x18),
+    RGB(0x00,0x00,0x00),
 };
 
-#define BGCOLOR CreateSolidBrush(colors[GRAY])
+#define BG_COLOR_BRUSH CreateSolidBrush(colors[WHITE])
+#define AXIS_COLOR colors[BLACK]
 
 typedef struct {
     int x;
@@ -50,9 +58,16 @@ typedef struct {
 } Size;
 
 typedef struct {
+    int r;
+    int g;
+    int b;
+} Color;
+
+typedef struct {
     Vec3 pos;
+    Color color;
     int radius;
-    HBRUSH color;
+    int closest_K;
 } Point;
 
 typedef struct {
@@ -64,36 +79,105 @@ typedef struct {
 
 Graph graph;
 
-#define MAX_POINTS 30
-Point points[MAX_POINTS];
+Point *points;
+int ok, width, height, comps;
+int pointCount = 0;
 
-#define HEIGHT 600
-#define WIDTH  600
-#define MAX_Z 20
+#define K_COUNT 2
+Point K[K_COUNT] = {0};
+
+
+WINBOOL CompareColors(Point p1, Point p2){
+    return p1.color.r == p2.color.r && p1.color.g == p2.color.g && p1.color.b == p2.color.b;
+}
+
+/*-------------------------------------
+|                                     |
+|        K-Means functions            |
+|                                     |
+-------------------------------------*/
+
+void InitializeK(Point *p, Color color, int index){
+    p->pos.x = rand()/255;
+    p->pos.y = rand()/255;
+    p->pos.z = rand()/255;
+    p->radius = 8;
+    p->color = color;
+    p->closest_K = index;
+
+}
+
+void update (Point K[K_COUNT], Point *dots){
+    int ax = 0;
+    int ay = 0;
+    int cc = 0;
+    for (int i = 0; i < K_COUNT; i++){
+        for (int j = 0; j < pointCount; j++){
+            if (CompareColors(K[i], dots[j])){
+                ax += dots[j].pos.x;
+                ay += dots[j].pos.y;
+                cc++;
+            }
+        }
+
+        if (cc == 0){
+            K[i].pos.x = rand() % WIDTH;
+            K[i].pos.y = rand() % HEIGHT;
+        }
+        else{
+            K[i].pos.x = (int)ax/cc;
+            K[i].pos.y = (int)ay/cc;
+        }
+        
+        cc = 0;
+        ax = 0;
+        ay = 0;
+    }
+}
+
+int SquaredDistance(Point b1, Point b2){
+    return ((b2.pos.x-b1.pos.x)*(b2.pos.x-b1.pos.x)) + ((b2.pos.y-b1.pos.y)*(b2.pos.y-b1.pos.y)) + ((b2.pos.z-b1.pos.z)*(b2.pos.z-b1.pos.z));
+}
 
 float lerp(int a, int b, float t)
 {
     return a + t * (b - a);
 }
+
+/*-------------------------------------
+|                                     |
+|        Drawing functions            |
+|                                     |
+-------------------------------------*/
+
+
 void DrawBackground(HDC screen, HBRUSH color){
     SelectObject(screen, color);
     Rectangle(screen, windowRect.left, windowRect.top, windowRect.right, windowRect.bottom);
     DeleteObject(color);
 }
-void DrawCircle(HDC screen, HBRUSH color,int x, int y, int radius){
-    SelectObject(screen, color);
+
+void DrawCircle(HDC screen, Color color,int x, int y, int radius){
+    HBRUSH brush = CreateSolidBrush(RGB(color.r, color.g, color.b));
+    SelectObject(screen, brush);
     Ellipse(screen, x-radius, y-radius, x+radius, y+radius);
-    DeleteObject(color);
+    DeleteObject(brush);
 }
 
-
-void Create2DPoint(Point *point, int x, int y, int radius, HBRUSH color){
+void Create2DPoint(Point *point, int x, int y, int radius, Color color){
     point->pos.x = x;
     point->pos.y = y;
     point->pos.z = 0;
     point->radius = radius;
     point->color = color;
+    point->closest_K = -1;
 }
+
+/*-------------------------------------
+|                                     |
+|        Graph functions              |
+|                                     |
+-------------------------------------*/
 
 void InitializeGraph(Graph *graph, Vec3 pos, Size size, int angle){
     //1,2,5,6 pushed back a lil to look more like a graph
@@ -108,22 +192,22 @@ void InitializeGraph(Graph *graph, Vec3 pos, Size size, int angle){
     int h = size.height;
 
     //first square
-    Create2DPoint(&graph->points[0], x +     angle, y     + angle, 5,(HBRUSH)NULL);
-    Create2DPoint(&graph->points[1], x + w - angle, y     - angle, 5,(HBRUSH)NULL); 
-    Create2DPoint(&graph->points[2], x + w - angle, y + h - angle, 5,(HBRUSH)NULL);
-    Create2DPoint(&graph->points[3], x +     angle, y + h + angle, 5,(HBRUSH)NULL);
+    Create2DPoint(&graph->points[0], x +     angle, y     + angle, 5,(Color){0,0,0});
+    Create2DPoint(&graph->points[1], x + w - angle, y     - angle, 5,(Color){0,0,0}); 
+    Create2DPoint(&graph->points[2], x + w - angle, y + h - angle, 5,(Color){0,0,0});
+    Create2DPoint(&graph->points[3], x +     angle, y + h + angle, 5,(Color){0,0,0});
     
     //second square
-    Create2DPoint(&graph->points[4], x - half_len     + angle, y - half_len     + angle, 5,(HBRUSH)NULL);
-    Create2DPoint(&graph->points[5], x + w - half_len - angle, y - half_len     - angle, 5,(HBRUSH)NULL);
-    Create2DPoint(&graph->points[6], x + w - half_len - angle, y + h - half_len - angle, 5,(HBRUSH)NULL);
-    Create2DPoint(&graph->points[7], x - half_len     + angle, y + h - half_len + angle, 5,(HBRUSH)NULL);
+    Create2DPoint(&graph->points[4], x - half_len     + angle, y - half_len     + angle, 5,(Color){0,0,0});
+    Create2DPoint(&graph->points[5], x + w - half_len - angle, y - half_len     - angle, 5,(Color){0,0,0});
+    Create2DPoint(&graph->points[6], x + w - half_len - angle, y + h - half_len - angle, 5,(Color){0,0,0});
+    Create2DPoint(&graph->points[7], x - half_len     + angle, y + h - half_len + angle, 5,(Color){0,0,0});
 }
 
 void DrawAxes(HDC screen, Graph g){;
 
     //drawing thick lines of graph
-    HPEN ThickPen = CreatePen(PS_SOLID, 3, colors[WHITE]);
+    HPEN ThickPen = CreatePen(PS_SOLID, 3, AXIS_COLOR);
     SelectObject(screen, ThickPen);
     MoveToEx(screen, g.points[2].pos.x, g.points[2].pos.y, (LPPOINT) NULL);
     LineTo(screen,   g.points[3].pos.x, g.points[3].pos.y);
@@ -132,7 +216,7 @@ void DrawAxes(HDC screen, Graph g){;
     DeleteObject(ThickPen);
 
     //drawing thin lines of graph
-    HPEN ThinPen = CreatePen(PS_SOLID, 1, colors[WHITE]);
+    HPEN ThinPen = CreatePen(PS_SOLID, 1, AXIS_COLOR);
     SelectObject(screen, ThinPen);
 
     for (float t = 0.3333f; t <= 1; t += 0.3333f){
@@ -156,36 +240,120 @@ void DrawAxes(HDC screen, Graph g){;
     DeleteObject(ThinPen);
 }
 
-void DrawLabels(HDC screen, Graph g){
-    //TODO: Implement function
+void DrawLabels(HDC screen){
 
+    //setup for creating rotated text
+    int angle = 150;
+    HGDIOBJ hfnt;
+    PLOGFONT plf = (PLOGFONT) LocalAlloc(LPTR, sizeof(LOGFONT)); 
+    StringCchCopy(plf->lfFaceName, 6, TEXT("Arial"));
+    plf->lfWeight = FW_NORMAL; 
+    SetBkMode(screen, TRANSPARENT); 
+
+    //Write text
+    plf->lfEscapement = angle; 
+    hfnt = CreateFontIndirect(plf); 
+    SelectObject(screen, hfnt);
+    TextOut(screen, 390, 510, "Red", 3); 
+    TextOut(screen, 340, 490, "85",  2); 
+    TextOut(screen, 412, 475, "170", 3);
+    TextOut(screen, 482, 462, "255", 3);  
+
+    angle = 3100;
+    plf->lfEscapement = angle; 
+    hfnt = CreateFontIndirect(plf); 
+    SelectObject(screen, hfnt);
+    TextOut(screen, 150, 430, "Blue", 4); 
+
+    angle = 0;
+    plf->lfEscapement = angle; 
+    hfnt = CreateFontIndirect(plf); 
+    SelectObject(screen, hfnt);
+    TextOut(screen, 80, 210, "G", 1); 
+    TextOut(screen, 83, 225, "r", 1); 
+    TextOut(screen, 80, 240, "e", 1); 
+    TextOut(screen, 80, 255, "e", 1);
+    TextOut(screen, 80, 270, "n", 1);  
+
+    TextOut(screen, 265, 500, "0",   1); 
+
+    DeleteObject(hfnt);
+    DeleteObject(plf);
 }
+
 
 void DrawMarkers(HDC screen, Graph g){
     int MarkerLen = 10;
     HPEN ThickPen = CreatePen(PS_SOLID, 3, colors[WHITE]);
+    SelectObject(screen, ThickPen);
+    for (float t = 0.3333f; t <= 1; t += 0.3333f){
+        MoveToEx(screen,(int)lerp(g.points[3].pos.x, g.points[2].pos.x, t), (int)lerp(g.points[3].pos.y, g.points[2].pos.y, t), (LPPOINT) NULL);
+        LineTo(screen,(int)lerp(g.points[3].pos.x, g.points[2].pos.x, t) + MarkerLen/2, (int)lerp(g.points[3].pos.y, g.points[2].pos.y, t) + MarkerLen/2);
 
+        MoveToEx(screen,(int)lerp(g.points[3].pos.x, g.points[7].pos.x, t), (int)lerp(g.points[3].pos.y, g.points[7].pos.y, t), (LPPOINT) NULL);
+        LineTo(screen,(int)lerp(g.points[3].pos.x, g.points[7].pos.x, t) - MarkerLen, (int)lerp(g.points[3].pos.y, g.points[7].pos.y, t) + 2);
+
+        MoveToEx(screen,(int)lerp(g.points[7].pos.x, g.points[4].pos.x, t), (int)lerp(g.points[7].pos.y, g.points[4].pos.y, t), (LPPOINT) NULL);
+        LineTo(screen,(int)lerp(g.points[7].pos.x, g.points[4].pos.x, t) - MarkerLen, (int)lerp(g.points[7].pos.y, g.points[4].pos.y, t) + 2);
+    }
     DeleteObject(ThickPen);
-    //TODO: Implement function
-
 }
 
 void DrawGraph(HDC screen, Graph g){
     DrawAxes(screen, g);
-    DrawLabels(screen, g);
     DrawMarkers(screen, g);
+    DrawLabels(screen);
 }
 
 
+/*-------------------------------------
+|                                     |
+|        Point functions              |
+|                                     |
+-------------------------------------*/
 
-void InitializePoint(Point *point){
-    point->pos.x  = rand()%WIDTH;
-    point->pos.y  = rand()%HEIGHT;
-    point->pos.z  = rand()%MAX_Z; 
-    point->radius = point->pos.z;
-    point->color  = CreateSolidBrush(colors[rand()%COLOR_COUNT]);
+void InitializePoint(Point *point, unsigned char r, unsigned char g,  unsigned char b){
+    point->pos.x  = r;
+    point->pos.y  = g;
+    point->pos.z  = b; 
+
+    //if you want varied radius, put "1"
+    //if you want constant radius, put "0"
+    #if 0
+    float t = ((float)b/255)*100;
+    point->radius = ((MAX_RADIUS)-((int)(t)%MAX_RADIUS))+ MIN_RADIUS;
+    #else
+    point->radius = 4;
+    #endif
+
+    point->color  = (Color){r,g,b};
+    point->closest_K = -1;
 }
 
+void PrintPoint(Point p){
+    printf("x: %d, y: %d, z: %d, radius: %d ", p.pos.x, p.pos.y, p.pos.z, p.radius);
+}
+
+void DrawPoint(HDC screen, Point point, Graph g){
+    int x = g.points[3].pos.x + point.pos.x - (point.pos.z/2);
+    int y = g.points[3].pos.y - point.pos.y - (point.pos.z/2);
+    if (x > g.points[3].pos.x){
+        x = x - (g.angle*2);
+        y = y - (g.angle*2);
+    }
+    DrawCircle(screen, point.color, x, y, point.radius);
+}
+
+void DrawPointWithColor(HDC screen, Point *point, Graph g, Color color){
+    int x = g.points[3].pos.x + point->pos.x - (point->pos.z/2);
+    int y = g.points[3].pos.y - point->pos.y - (point->pos.z/2);
+    if (x > g.points[3].pos.x){
+        x = x - (g.angle*2);
+        y = y - (g.angle*2);
+    }
+    point->color = color;
+    DrawCircle(screen, color, x, y, point->radius);
+}
 
 // Step 4: the Window Procedure
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -205,42 +373,85 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case WM_KEYDOWN:
             switch (wParam)
             {
+                //R
+                case 0x52:
+                    update(K, points);
+                    InvalidateRect(hwnd, &(RECT){windowRect.top, windowRect.left, windowRect.right, windowRect.bottom}, FALSE);
+                    break;
                 default:
                     break;
             }
             break;
 
         case WM_PAINT:
+            Point closest = K[0];
+            Color K_colors[K_COUNT] = {0};
+            int K_colors_count[K_COUNT] = {0};
+            for (int i = 0; i < pointCount; i++){
+
+                for (int j = 0; j < K_COUNT; j++){
+                    if (SquaredDistance(points[i], closest) >= SquaredDistance(points[i], K[j])){
+                        closest = K[j];
+                        points[i].closest_K = j;
+
+                    }
+                }
+                K_colors[points[i].closest_K].r += points[i].color.r;
+                K_colors[points[i].closest_K].g += points[i].color.g;
+                K_colors[points[i].closest_K].b += points[i].color.b;
+
+                K_colors_count[points[i].closest_K] += 1;
+                //printf("COLOR %d = r: %d, g: %d, b: %d, count: %d\n", i, K_colors[points[i].closest_K].r, K_colors[points[i].closest_K].g, K_colors[points[i].closest_K].b, K_colors_count[points[i].closest_K]);
+            }
+            for (int i = 0; i < K_COUNT; i++){
+                if (K_colors_count[i] != 0){
+                    K_colors[i].r /= K_colors_count[i];
+                    K_colors[i].g /= K_colors_count[i];
+                    K_colors[i].b /= K_colors_count[i];
+                }
+                printf("COLOR %d = r: %d, g: %d, b: %d, count: %d\n", i, K_colors[i].r, K_colors[i].g, K_colors[i].b, K_colors_count[i]);
+            }
+
             // sets up backbuffer
             HDC hdc = BeginPaint(hwnd, &ps);
             HDC hdcBack = CreateCompatibleDC(hdc);
             GetClientRect(hwnd, &windowRect); 
+            HPEN nullPen = CreatePen(PS_NULL, 1, colors[WHITE]);
             HBITMAP backBuffer = CreateCompatibleBitmap(hdc, windowRect.right, windowRect.bottom);
             SelectObject(hdcBack, backBuffer);
-            DrawBackground(hdcBack, BGCOLOR);
-            //tells program to redraw the screen
-            //InvalidateRect(hwnd, &(RECT){windowRect.top, windowRect.left, windowRect.right, windowRect.bottom}, FALSE);
+            DrawBackground(hdcBack, BG_COLOR_BRUSH);
     
             //draws
-            for (int i = 0; i < MAX_POINTS; i++){
-                //DrawCircle(hdcBack, points[i].color, points[i].pos.x, points[i].pos.y, points[i].radius);
-            }
             DrawGraph(hdcBack, graph);
+
+            SelectObject(hdcBack, nullPen); 
+
+            /*
+            for (int i = 0; i < pointCount; i++){
+                DrawPoint(hdcBack, points[i], graph);
+            }
+            */
+
+            for (int i = 0; i < pointCount; i++){
+                DrawPointWithColor(hdcBack, &points[i], graph, K_colors[points[i].closest_K]);
+            }
+
+            //draws Ks
+            for (int i = 0; i < K_COUNT; i++){
+                DrawPointWithColor(hdcBack, &K[i], graph, K_colors[K[i].closest_K]);
+            }
             //copies back buffer into front buffer
             BitBlt(hdc, 0,0, windowRect.right, windowRect.bottom, hdcBack,0,0,SRCCOPY);
 
             //deletes objects
             DeleteDC(hdcBack);
             DeleteObject(backBuffer);
+            DeleteObject(nullPen);
             EndPaint(hwnd, &ps);
 
             //logic
-            x = (x+5)%WIDTH;
-            y = (y+5)%HEIGHT;
-            
             
             //slows down program
-            printf("PAINTED ");
             Sleep(20);
             break;
         default:
@@ -281,11 +492,56 @@ HWND WinEasyCreateWindow(char *windowTitle, char *className, HINSTANCE hInstance
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
     srand(time(NULL));
-
-    //setup
-    for (int i = 0; i < MAX_POINTS; i++){
-        InitializePoint(&points[i]);
+    int argc;
+    PWSTR *argv = CommandLineToArgvW(GetCommandLineW(),&argc);
+    if (argc < 2){
+        printf("ERROR: User must provide input image\n");
+        printf("USAGE: ./color-quantizer <image_filepath>\n");
+        exit(1);
     }
+
+    size_t filename_len = wcslen(argv[1]);
+    char *filename = (char *)malloc(sizeof(char)*(filename_len));
+    wcstombs(filename, argv[1], filename_len);
+    filename[filename_len] = '\0';
+
+    /*
+    if (argc >= 3){
+        char *temp = (char *)malloc(sizeof(char)*(wcslen(argv[2])));
+        wcstombs(temp, argv[2], wcslen(argv[2]));
+        temp[wcslen(argv[2])] = '\0';
+        K_COUNT = atoi(temp);
+
+        free(temp);
+    }
+    */
+    ok = stbi_info(filename, &width, &height, &comps);
+    if (ok == 0){
+        printf("ERROR: Image is not a supported format. Please supply one that is.\n");
+        exit(1);
+    }
+ 
+    unsigned char *pixels = stbi_load(filename, &width, &height, &comps, 0);
+    points = (Point *)malloc((sizeof(Point))*((width*height))); 
+    //setup
+
+    printf("K_COUNT: %d\n", K_COUNT);
+    printf("width: %d, height: %d, comps: %d\n", width, height, comps);
+
+    for (size_t i = 0; i < (size_t)width*height*comps; i += comps){
+        InitializePoint(&points[pointCount], pixels[i],pixels[i+1],pixels[i+2]);
+        //PrintPoint(points[pointCount]);
+        pointCount++;
+    }
+
+
+    printf("PointCount: %d\n", pointCount);
+    free(filename);
+
+    for (int i = 0; i < K_COUNT; i++){
+        InitializeK(&K[i], (Color){0,0,0}, i);
+    }
+
     Vec3 GraphPoint = {.x = (WIDTH/2)-50, .y = (HEIGHT/2)-80, .z = 0};
     Size GraphSize =  {.length = 255, .width = 255,  .height = 255};
     int angle = 20;
@@ -326,6 +582,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         DispatchMessage(&Msg);
     }
     return Msg.wParam;
-
+    LocalFree(argv);
 }
 
