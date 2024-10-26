@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <time.h>
 #include <math.h>
-//#include "strsafe.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -91,6 +90,7 @@ int pointCount = 0;
 #define MAX_Ks 10
 int K_count = 2;
 Point K[MAX_Ks] = {0};
+Color *K_colors;
 
 char *filename;
 
@@ -404,6 +404,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     unsigned char *pixels = malloc(sizeof(unsigned char)*width*height*3);
                     PointsToPixels(pixels, points);
                     WriteImageWithName("output.jpg", pixels);
+                    for (int i = 0; i < K_count; i++){
+                        printf("Color %d: r: %X, g: %X, b: %X or 0x%X%X%X\n", i+1, K_colors[i].r, K_colors[i].g, K_colors[i].b, K_colors[i].r, K_colors[i].g, K_colors[i].b);
+                    }
                     break;
                 //R
                 case 0x52:
@@ -418,7 +421,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case WM_PAINT:
             //sets up K-means
             Point closest = K[0];
-            Color *K_colors = (Color *)malloc(sizeof(Color)*K_count);
+            K_colors = (Color *)malloc(sizeof(Color)*K_count);
             memset(K_colors, 0, sizeof(Color)*K_count);
             int *K_colors_count = (int *)malloc(sizeof(int)*K_count);
             memset(K_colors_count, 0, sizeof(int)*K_count);
@@ -531,7 +534,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     PWSTR *argv = CommandLineToArgvW(GetCommandLineW(),&argc);
     if (argc < 2){
         printf("ERROR: User must provide input image\n");
-        printf("USAGE: ./color-quantizer <image_filepath> <K_count>\n");
+        printf("USAGE: ./color-quantizer image_filepath <K_count>\n");
         printf("K_count is 2 by default and max 10.\n");
         exit(1);
     }
